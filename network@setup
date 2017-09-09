@@ -70,3 +70,53 @@ Fix it by doing the following to give 224MB to the OS :
 # mv ./start.elf ./start.elf.old
 # cp ./arm224_start.elf ./start.elf
 # reboot
+
+RESIZING SD CARD :-  _------------------------------------
+
+ArchLinux is now up to date and running, but the full SD card is not used. We need to extend the current partition to use the full space available.
+
+# fdisk /dev/mmcblk0p2
+
+Delete the partition :
+d
+2
+
+Create a new one (new, primary, 2):
+n
+p
+2
+Enter
+Enter
+
+Write changes to disk :
+w
+
+Reboot to apply the changes :
+# reboot
+
+While the startup process, it will run a command to extend the partition, this will take a while depending on the size of your SD card
+
+ADDING ANOTHER USER :--------------------------------------
+
+It's no good idea to do everything as root. if this account gets compromized, we've got some serious problems. To avoid this we will now create a user who will not be root, but who will be allowed to run commands as root when needed.
+
+We'll create now the user "rss", but feel free to create something better for you ;-)
+# useradd -m -g users -G optical,storage,video,wheel,power -s /bin/bash rss
+
+Create a password for our new account :
+# passwd rss
+
+Again you should really chose a strong password....
+
+We then need to install the "sudo" package, which will enable our user to run commands as root when needed :
+# pacman -S sudo
+
+The last thing to allow us to use the sudo command :
+# visudo
+## Uncomment to allow members of group wheel to execute any command
+%wheel ALL=(ALL) ALL
+
+Logout from root, and login with our new user :
+# logout
+
+From now on, your prompt will begin with "$" and not anymore with "#", and will require the sudo command for every privileged task.
