@@ -1,0 +1,72 @@
+Having a stroong password, we can now go on and configure the network settings on our Raspberry Security System (RSS). We have to set a static IP address as well as the netmask and the gateway. The network topology is as follow : the LAN subnet is 192.168.1.0/24, the DSL modem/router is 192.168.1.1 (LAN gateway), and the RSS will be 192.168.1.3. Of course you can modify these settings accordingly to your network.
+
+# vi /etc/rc.conf
+# -----------------------------------------------------------------------
+# NETWORKING
+# -----------------------------------------------------------------------
+# HOSTNAME: Hostname of machine. Should also be put in /etc/hosts
+#
+HOSTNAME="RSS"
+# Static IP
+interface=eth0
+address=192.168.1.3
+netmask=255.255.255.0
+broadcast=192.168.1.255
+gateway=192.168.1.1
+
+# Disable DHCP by commenting these lines or else it will override the static IP configuration
+# interface=eth0
+# address=
+# netmask=
+# gateway=
+
+Remove from startup the unneeded daemons :
+DAEMONS=(!hwclock syslog-ng network @crond @sshd @openntpd)
+
+# vi /etc/hosts
+192.168.1.3 PiWall
+127.0.0.1 localhost.localdomain localhost
+::1 localhost.localdomain localhost
+
+# rc.d restart network
+
+UPDATE :-
+
+
+In this step we'll update the system and install required packages for the RSS
+
+Initiate a full upgrade :
+# pacman –Syu
+
+Maybe the system asks to update pacman itself, if so answer with "yes".
+
+Now we need to create keys for pacman :
+# pacman-key –init
+
+If you just wait for the process to finish, you will wait hours! The keys are generated with random factors and need external commands to speed up the process. If you have a mouse connected, you could move it around, or you just open another terminal (ALT + F2 or F3) and run different commands like ls -l, less, top, cat and so on.
+
+After te keys are generated we now request a full upgrade again:
+# pacman -Syu
+
+This could take a while, makse some tea or coffee, pet your cat/dog, call a friend or read another chapter of a book. You won't miss anything awesome if you don't sit all the time in front of your TV or monitor.
+
+Once it's done, we can now install the additional packages:
+# pacman –S vim
+# pacman –S htop
+# pacman –S tcpdump
+
+Vim is simply a lot better than vi, htop is an improved top, and tcpdump is very handy to debug network traffic and ensure that everything is routed correctly.
+
+Now reboot the system to apply updates that requires it :
+# reboot
+
+Once the system has restarted, check the memory available :
+# htop
+
+If the total memory is down to 128Mo, that means that the "start.elf" is splitting 128MB for the OS and 128MB for the GPU. We do not need so much memory for the GPU, and we certainly need more for the system.
+
+Fix it by doing the following to give 224MB to the OS :
+# cd /boot
+# mv ./start.elf ./start.elf.old
+# cp ./arm224_start.elf ./start.elf
+# reboot
