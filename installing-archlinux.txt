@@ -1,0 +1,23 @@
+To install your image on your SD card, please follow the following Windows instructions quoted from the ArchLinux ARM website :
+
+1. Download and install Win32DiskImager
+2. Select the archlinuxarm-13-06-2012.img image file, select your SD card drive letter, and click Write
+3. Eject the card from your computer, insert into the Raspberry Pi, and power it on.
+4. If your keyboard, mouse, or other USB device doesn't appear to be working properly, try using it through a POWERED USB hub.
+    The Raspberry Pi's USB ports are limited to 100mA.
+
+Now we should have a running ArchLinux on your Raspberry Pi.
+
+
+After the boot sequence you are prompted to enter a login. The default login and password for ArchLinux ARM are root/root.
+
+If you set up a network security device you shouldn't fail with a weak password which can be cracked in a few seconds
+
+There's a nice comic which helps you to chose a strong passwords below. If you made your choice you can change the default password with the following command
+
+# passwd
+
+Enter the password twice. if they are identical the password will be changed. Please make a note of the new password and store it at a safe place. 
+
+
+

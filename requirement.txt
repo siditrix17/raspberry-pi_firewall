@@ -1,0 +1,26 @@
+we will have a small security system with the following features:
+
+- Enforce network traffic policies
+- Ensure that abnormal packets does not get out or in our network
+- DHCP server to distribute network parameters to your LAN
+- DNS cache/server to speed up DNS requests and filter out bad DNS queries
+- NIDS to detect malicious traffic, such as malware or vulnerability exploits
+- Central network monitoring node to watch and debug network traffic
+
+Some may now say "Hey wait, the Raspberry hs only one network port, how should this act as a gateway?". This is done by a small trick. Of course you could buy an USB to ethernet device to get a second network card. But to keep it as simple as possible we just use the Raspi as our gateway, this works really nice. Traffic flows in both ways trought it. Of course it requires some additional configuration, but it's not a problem.
+
+
+To make our security system we need:
+
+- A Raspberry Pi
+- An SD card, I took a class 6 SD Card with 8 GB, 4 should be enough. Be careful with class 10 types, many of them cause
+  problems with the Raspberry!
+- An Ethernet cable
+- A micro-usb power cable
+- An Archlinux ARM image. As we don't need any graphical interface, and as the NIDS part will require much of the ressources, we
+  need a lightweight one with a barebone terminal. So ArchLinux ARM is the best choice for this project.
+- Win32DiskManager software
+- An USB keyboard (during the time of installation)
+
+During the setup we need a display. Maybe you connect your Raspberry to a TV screen or to a monitor, which is what I prefer. After the basic setup you won't need it any longer becaue we'll remotely access our Raspi via the network
+
