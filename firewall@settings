@@ -1,0 +1,1215 @@
+Below, you will find a very restrictive firewall script. You may need to modify it to fit your needs as it will block websites not on standards ports (80/443), and softwares not using HTTP/HTTPS/FTP ports (P2P, Skype, Google Talk, etc...).
+
+If you do not wish that level of security, there's also a more straightforward firewall script that is basically "set and forget".
+
+You can chose between firewall.advanced or firewall.simple, and then customise it. Credits go to Guillaume Kaddouch
+
+A - Advanced ruleset
+This script basically does the following :
+- Blocks inbound/outbound invalid TCP flags (even from established flows)
+- Optimises DNS queries (IP TOS field)
+- Identifies traffic by flow type, and then match it against a ruleset
+- Adds randomness to the NAT process
+- Only allow few outbound standard ports (http, https, ftp)
+- Logs accurately what is dropped and avoid log flood
+- Drops inbound packets with low TTL (could mean a ttl expiry attack or a traceroute)
+- Detect & block outbound malware connections
+
+$ sudo touch /etc/firewall.advanced
+$ sudo touch /etc/firewall.flows
+$ sudo chmod u+x /etc/firewall.*
+
+The flows identification is a list of rules directing the traffic into the matching custom chain (e.g FORWARD_OUT, FORWARD_IN, LAN_IN, etc...). This list of rules, once debugged and validated, should not be modified afterwards. Also, as they use some space in the script and could be boring to read, it makes the filtering rules harder to read if they are on the same script. That's why I move them in a separate file, that I just call from the main script :
+$ sudo vi /etc/firewall.flows
+#!/bin/bash
+
+# " Date August 2012
+# " Author : Guillaume Kaddouch
+# " Version : Flows 1.0
+
+#######################
+# FLOW IDENTIFICATION #
+##############################################################################################
+# NAT_OUT
+iptables -t nat -A POSTROUTING -o $LAN -p tcp --ipv4 -m iprange \
+--src-range $DHCP_RANGE ! --dst-range $DHCP_RANGE -m pkttype --pkt-type unicast -m addrtype ! --dst-type LOCAL\
+-m state --state NEW,ESTABLISHED,RELATED -j NAT_OUT
+
+iptables -t nat -A POSTROUTING -o $LAN -p udp --ipv4 -m iprange \
+--src-range $DHCP_RANGE ! --dst-range $DHCP_RANGE -m pkttype --pkt-type unicast -m addrtype ! --dst-type LOCAL\
+-m state --state NEW,ESTABLISHED,RELATED -j NAT_OUT
+
+iptables -t nat -A POSTROUTING -o $LAN -p icmp --ipv4 -m iprange \
+--src-range $DHCP_RANGE ! --dst-range $DHCP_RANGE -m pkttype --pkt-type unicast -m addrtype ! --dst-type LOCAL\
+-m state --state NEW,ESTABLISHED,RELATED -j NAT_OUT
+
+# FORWARD_OUT
+iptables -A FORWARD -i $LAN -p tcp --ipv4 -m iprange \
+--src-range $DHCP_RANGE ! --dst-range $DHCP_RANGE -m pkttype --pkt-type unicast -m addrtype ! --src-type LOCAL\
+-m state --state NEW,ESTABLISHED,RELATED -j FORWARD_OUT
+
+iptables -A FORWARD -i $LAN -p udp --ipv4 -m iprange \
+--src-range $DHCP_RANGE ! --dst-range $DHCP_RANGE -m pkttype --pkt-type unicast -m addrtype ! --src-type LOCAL\
+-m state --state NEW,ESTABLISHED,RELATED -j FORWARD_OUT
+
+iptables -A FORWARD -i $LAN -p icmp --ipv4 -m iprange \
+--src-range $DHCP_RANGE ! --dst-range $DHCP_RANGE -m pkttype --pkt-type unicast -m addrtype ! --src-type LOCAL\
+-m state --state NEW,ESTABLISHED,RELATED -j FORWARD_OUT
+
+# FORWARD_IN
+iptables -A FORWARD -i $LAN -p tcp --ipv4 -m iprange \
+! --src-range $DHCP_RANGE --dst-range $DHCP_RANGE -m pkttype --pkt-type unicast -m addrtype ! --src-type LOCAL\
+-m state --state ESTABLISHED,RELATED -j FORWARD_IN
+
+iptables -A FORWARD -i $LAN -p udp --ipv4 -m iprange \
+! --src-range $DHCP_RANGE --dst-range $DHCP_RANGE -m pkttype --pkt-type unicast -m addrtype ! --src-type LOCAL\
+-m state --state ESTABLISHED,RELATED -j FORWARD_IN
+
+iptables -A FORWARD -i $LAN -p icmp --ipv4 -m iprange \
+! --src-range $DHCP_RANGE --dst-range $DHCP_RANGE -m pkttype --pkt-type unicast -m addrtype ! --src-type LOCAL\
+-m state --state ESTABLISHED,RELATED -j FORWARD_IN
+
+# LAN_IN
+iptables -A INPUT -i $LAN -p tcp --ipv4 -m iprange \
+--src-range $DHCP_RANGE -d $RSS -m pkttype --pkt-type unicast -m addrtype --dst-type LOCAL\
+-m state --state NEW,ESTABLISHED,RELATED -j LAN_IN
+
+iptables -A INPUT -i $LAN -p udp --ipv4 -m iprange \
+--src-range $DHCP_RANGE -d $RSS -m pkttype --pkt-type unicast -m addrtype --dst-type LOCAL\
+-m state --state NEW,ESTABLISHED,RELATED -j LAN_IN
+
+iptables -A INPUT -i $LAN -p icmp --ipv4 -m iprange \
+--src-range $DHCP_RANGE -d $RSS -m pkttype --pkt-type unicast -m addrtype --dst-type LOCAL\
+-m state --state NEW,ESTABLISHED,RELATED -j LAN_IN
+
+# LAN_BROADCAST
+iptables -A INPUT -i $LAN -p tcp --ipv4 \
+! -d $RSS -m pkttype --pkt-type broadcast -m addrtype --dst-type BROADCAST\
+
+-m state ! --state INVALID -j LAN_BROADCAST
+
+iptables -A INPUT -i $LAN -p udp --ipv4 \
+! -d $RSS -m pkttype --pkt-type broadcast -m addrtype --dst-type BROADCAST\
+-m state ! --state INVALID -j LAN_BROADCAST
+
+iptables -A INPUT -i $LAN -p icmp --ipv4 \
+! -d $RSS -m pkttype --pkt-type broadcast -m addrtype --dst-type BROADCAST\
+-m state ! --state INVALID -j LAN_BROADCAST
+
+# INTERNET_GATEWAY
+iptables -A INPUT -i $LAN -p tcp --ipv4 \
+! -s $LAN_SUBNET -d $RSS -m pkttype --pkt-type unicast -m addrtype --dst-type LOCAL\
+-m state --state ESTABLISHED,RELATED -j INTERNET_GATEWAY
+
+iptables -A INPUT -i $LAN -p udp --ipv4 ! \
+-s $LAN_SUBNET -d $RSS -m pkttype --pkt-type unicast -m addrtype --dst-type LOCAL\
+-m state --state ESTABLISHED,RELATED -j INTERNET_GATEWAY
+
+iptables -A INPUT -i $LAN -p icmp --ipv4 \
+! -s $LAN_SUBNET -d $RSS -m pkttype --pkt-type unicast -m addrtype --dst-type LOCAL\
+-m state --state ESTABLISHED,RELATED -j INTERNET_GATEWAY
+
+# GATEWAY_LAN
+iptables -A OUTPUT -o $LAN -p tcp --ipv4 \
+-s $RSS -d $LAN_SUBNET -m pkttype --pkt-type unicast -m addrtype --dst-type UNICAST\
+-m state --state NEW,ESTABLISHED,RELATED -j GATEWAY_LAN
+
+iptables -A OUTPUT -o $LAN -p udp --ipv4 \
+-s $RSS -d $LAN_SUBNET -m pkttype --pkt-type unicast -m addrtype --dst-type UNICAST\
+-m state --state NEW,ESTABLISHED,RELATED -j GATEWAY_LAN
+
+iptables -A OUTPUT -o $LAN -p icmp --ipv4 \
+-s $RSS -d $LAN_SUBNET -m pkttype --pkt-type unicast -m addrtype --dst-type UNICAST\
+-m state --state NEW,ESTABLISHED,RELATED -j GATEWAY_LAN
+
+# GATEWAY_BROADCAST
+iptables -A OUTPUT -o $LAN -p tcp --ipv4 \
+-s $RSS -m pkttype --pkt-type broadcast -m addrtype --dst-type BROADCAST\
+-m state --state NEW,ESTABLISHED,RELATED -j GATEWAY_BROADCAST
+
+iptables -A OUTPUT -o $LAN -p udp --ipv4 \
+-s $RSS -m pkttype --pkt-type broadcast -m addrtype --dst-type BROADCAST\
+-m state --state NEW,ESTABLISHED,RELATED -j GATEWAY_BROADCAST
+
+iptables -A OUTPUT -o $LAN -p icmp --ipv4 \
+-s $RSS -m pkttype --pkt-type broadcast -m addrtype --dst-type BROADCAST\
+-m state --state NEW,ESTABLISHED,RELATED -j GATEWAY_BROADCAST
+
+# GATEWAY_INTERNET
+iptables -A OUTPUT -o $LAN -p tcp --ipv4 \
+-s $RSS ! -d $LAN_SUBNET -m pkttype --pkt-type unicast -m addrtype --dst-type UNICAST\
+-m state --state NEW,ESTABLISHED,RELATED -j GATEWAY_INTERNET
+
+iptables -A OUTPUT -o $LAN -p udp --ipv4 \
+-s $RSS ! -d $LAN_SUBNET -m pkttype --pkt-type unicast -m addrtype --dst-type UNICAST\
+-m state --state NEW,ESTABLISHED,RELATED -j GATEWAY_INTERNET
+
+iptables -A OUTPUT -o $LAN -p icmp --ipv4 \
+-s $RSS ! -d $LAN_SUBNET -m pkttype --pkt-type unicast -m addrtype --dst-type UNICAST\
+-m state --state NEW,ESTABLISHED,RELATED -j GATEWAY_INTERNET
+
+##############################################################################################
+
+Now we will create the filtering rules script talked earlier :
+$ sudo vi /etc/firewall.advanced
+#!/bin/bash
+
+# " Date August 2012
+# " Author : Guillaume Kaddouch
+# " URL : http://networkfilter.blogspot.com
+# " Version : Advanced 1.0
+
+echo "Setting up variables"
+# VARIABLES TO CUSTOMISE TO MATCH YOUR NETWORK
+LAN="eth0"
+LAN_SUBNET="192.168.1.0/24"
+DHCP_RANGE="192.168.1.10-192.168.1.20"
+DNS_SERVER1="8.8.8.8"
+DNS_SERVER2="208.67.222.222"
+RSS="192.168.1.3"
+MODEM_ROUTER="192.168.1.1"
+UNPRIV_PORTS="1024:65535"
+SSH="15507"
+NTP_SERVER="65.55.21.22"
+
+echo "Flushing existing chains and rules..."
+# FLUSHING CHAINS & RULES
+iptables -t filter -F
+iptables -t filter -X
+iptables -t nat -F
+iptables -t nat -X
+iptables -t mangle -F
+iptables -t mangle -X
+
+echo "Setting up default policies"
+# DEFAULT POLICIES
+iptables -P INPUT DROP
+iptables -P OUTPUT DROP
+iptables -P FORWARD DROP
+
+# LOOPBACK
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A OUTPUT -o lo -j ACCEPT
+
+echo "Creating chains"
+# CHAINS
+iptables -N FORWARD_OUT
+iptables -N FORWARD_IN
+iptables -N LAN_IN
+iptables -N LAN_BROADCAST
+iptables -N GATEWAY_LAN
+iptables -N GATEWAY_BROADCAST
+iptables -N GATEWAY_INTERNET
+iptables -N INTERNET_GATEWAY
+iptables -t nat -N NAT_OUT
+
+# CHAIN TO CHECK, LOG, AND OPTIMISE
+iptables -N CHECK_TCP_FLAGS
+iptables -N LOGDROP_TCP_FLAGS
+iptables -N LOGDROP_MALWARE
+iptables -N LOGDROP_BADPORT
+iptables -t mangle -N FAST_DNS
+
+echo "Loading rules"
+
+#################################
+# PROTOCOL CHECK & OPTIMIZATION #
+##############################################################################################
+iptables -A FORWARD -i $LAN -p tcp --ipv4 -j CHECK_TCP_FLAGS
+iptables -A INPUT -i $LAN -p tcp --ipv4 -j CHECK_TCP_FLAGS
+
+iptables -t mangle -A OUTPUT -o $LAN -p tcp --ipv4 -s $RSS -m pkttype --pkt-type unicast --dport domain -m \
+state --state NEW,ESTABLISHED,RELATED -j FAST_DNS
+
+iptables -t mangle -A OUTPUT -o $LAN -p udp --ipv4 -s $RSS -m pkttype --pkt-type unicast --dport domain -m \
+state --state NEW,ESTABLISHED,RELATED -j FAST_DNS
+##############################################################################################
+
+###################
+# CHECK_TCP_FLAGS #
+##############################################################################################
+iptables -A CHECK_TCP_FLAGS -p tcp --tcp-flags ACK,FIN FIN -j LOGDROP_TCP_FLAGS
+iptables -A CHECK_TCP_FLAGS -p tcp --tcp-flags ACK,PSH PSH -j LOGDROP_TCP_FLAGS
+iptables -A CHECK_TCP_FLAGS -p tcp --tcp-flags ACK,URG URG -j LOGDROP_TCP_FLAGS
+iptables -A CHECK_TCP_FLAGS -p tcp --tcp-flags FIN,RST FIN,RST -j LOGDROP_TCP_FLAGS
+iptables -A CHECK_TCP_FLAGS -p tcp --tcp-flags SYN,FIN SYN,FIN -j LOGDROP_TCP_FLAGS
+iptables -A CHECK_TCP_FLAGS -p tcp --tcp-flags SYN,RST SYN,RST -j LOGDROP_TCP_FLAGS
+iptables -A CHECK_TCP_FLAGS -p tcp --tcp-flags ALL ALL -j LOGDROP_TCP_FLAGS
+iptables -A CHECK_TCP_FLAGS -p tcp --tcp-flags ALL NONE -j LOGDROP_TCP_FLAGS
+iptables -A CHECK_TCP_FLAGS -p tcp --tcp-flags ALL FIN,PSH,URG -j LOGDROP_TCP_FLAGS
+iptables -A CHECK_TCP_FLAGS -p tcp --tcp-flags ALL SYN,FIN,PSH,URG -j LOGDROP_TCP_FLAGS
+iptables -A CHECK_TCP_FLAGS -p tcp --tcp-flags ALL SYN,RST,ACK,FIN,URG -j LOGDROP_TCP_FLAGS
+
+iptables -A LOGDROP_TCP_FLAGS -m limit --limit 1/s -j LOG --log-tcp-options --log-prefix \
+"[IPTABLES: BAD TCP FLAGS]"
+
+iptables -A LOGDROP_TCP_FLAGS -j DROP
+##############################################################################################
+
+############
+# FAST_DNS #
+##############################################################################################
+iptables -t mangle -A FAST_DNS -p udp -d $DNS_SERVER1 -j TOS --set-tos Minimize-Delay
+iptables -t mangle -A FAST_DNS -p udp -d $DNS_SERVER2 -j TOS --set-tos Minimize-Delay
+iptables -t mangle -A FAST_DNS -p tcp -d $DNS_SERVER1 -j TOS --set-tos Minimize-Delay
+iptables -t mangle -A FAST_DNS -p tcp -d $DNS_SERVER2 -j TOS --set-tos Minimize-Delay
+##############################################################################################
+
+# FLOW IDENTIFICATION #
+source "/etc/firewall.flows"
+
+############
+# NAT_OUT #
+##############################################################################################
+iptables -t nat -A NAT_OUT -j MASQUERADE --random
+##############################################################################################
+
+###############
+# FORWARD OUT #
+##############################################################################################
+# Potential Malware traffic
+# If not dropped here, they would have been blocked by the default policy
+# However, we take the opportunity to save them in a "bad_traffic" table
+# This table enables us to block LAN's hosts trying to access too many malware ports
+# Thus being potentially infected (and requiring an antivirus analysis)
+#
+# As soon as a LAN host has hit 5 times rules below within 2mn, DROP all forward out from that host
+iptables -A FORWARD_OUT -p tcp -m recent --name bad_traffic --rcheck --rttl --hitcount 5 --seconds 120 -j \
+LOGDROP_MALWARE
+
+iptables -A FORWARD_OUT -p tcp --dport 139 -m recent --name bad_traffic --set -j LOGDROP_BADPORT
+iptables -A FORWARD_OUT -p tcp --dport 445 -m recent --name bad_traffic --set -j LOGDROP_BADPORT
+iptables -A FORWARD_OUT -p tcp --dport 135 -m recent --name bad_traffic --set -j LOGDROP_BADPORT
+iptables -A FORWARD_OUT -p tcp --dport 6667 -m recent --name bad_traffic --set -j LOGDROP_BADPORT
+iptables -A FORWARD_OUT -p tcp --dport 1433:1434 -m recent --name bad_traffic --set -j LOGDROP_BADPORT
+iptables -A FORWARD_OUT -p udp --dport 1433:1434 -m recent --name bad_traffic --set -j LOGDROP_BADPORT
+iptables -A LOGDROP_BADPORT -m limit --limit 1/s -j LOG --log-prefix "[IPTABLES: BAD PORT]"
+iptables -A LOGDROP_BADPORT -j DROP
+iptables -A LOGDROP_MALWARE -m limit --limit 1/s -j LOG --log-prefix "[IPTABLES: INFECTED HOST]"
+iptables -A LOGDROP_MALWARE -j DROP
+
+# Allowed ports
+iptables -A FORWARD_OUT -p tcp --sport $UNPRIV_PORTS -m multiport --dports ftp,http,https,8080 -j ACCEPT
+
+# Allow ESTABLISHED and RELATED connections to other ports, required for FTP for instance
+iptables -A FORWARD_OUT -p tcp --sport $UNPRIV_PORTS --dport $UNPRIV_PORTS -m state --state \
+ESTABLISHED,RELATED -j ACCEPT
+
+# NTP Requests (modify the variable at the begining)
+iptables -A FORWARD_OUT -p udp -d $NTP_SERVER --sport ntp --dport ntp -j ACCEPT
+
+# Echo request
+iptables -A FORWARD_OUT -p icmp -m icmp --icmp-type echo-request -j ACCEPT
+
+# Reject traffic we do not want, many options below (create the corresponding variables)
+# iptables -A FORWARD_OUT -p tcp --dport $port_of_a_host_to_block -j REJECT --reject-with \
+# icmp-host-prohibited
+# iptables -A FORWARD_OUT -d $subnet_to_block -j REJECT --reject-with icmp-net-prohibited
+
+# Block & Log everything else
+iptables -A FORWARD_OUT -m limit --limit 1/s -j LOG --log-prefix "[IPTABLES: FORWARD_OUT]"
+iptables -A FORWARD_OUT -j DROP
+##############################################################################################
+
+##############
+# FORWARD_IN #
+##############################################################################################
+# Allow forwarding of incoming established or related flows, with a TTL > 10
+iptables -A FORWARD_IN -m ttl --ttl-gt 10 -j ACCEPT
+
+# Block & Log everything else
+iptables -A FORWARD_IN -m limit --limit 1/s -j LOG --log-prefix "[IPTABLES: FORWARD_IN]"
+iptables -A FORWARD_IN -j DROP
+##############################################################################################
+
+##########
+# LAN_IN #
+##############################################################################################
+# Allow DHCP broadcasts from the inside
+iptables -A LAN_IN -i $LAN -p udp --sport 67:68 --dport 67:68 -j ACCEPT
+
+# Allow DNS queries from the LAN to the Raspberry Security Syste,
+iptables -A LAN_IN -i $LAN -p udp --sport $UNPRIV_PORTS --dport 53 -j ACCEPT
+iptables -A LAN_IN -i $LAN -p tcp --sport $UNPRIV_PORTS --dport 53 -j ACCEPT
+
+# SSH connections
+# (you may add a check for the remote OS)
+iptables -A LAN_IN -i $LAN -p tcp --sport $UNPRIV_PORTS --dport $SSH -j ACCEPT
+
+# ICMP LAN (Type 3 = unreachable [destination|port|protocol])
+iptables -A LAN_IN -p icmp -m icmp --icmp-type echo-request -j ACCEPT
+iptables -A LAN_IN -p icmp -m icmp --icmp-type 3 -j ACCEPT
+
+# Block & Log everything else
+iptables -A LAN_IN -m limit --limit 1/s -j LOG --log-prefix "[IPTABLES: LAN_IN]"
+iptables -A LAN_IN -j DROP
+##############################################################################################
+
+##################
+# LAN_BROADCAST #
+##############################################################################################
+# Allow DHCP broadcasts from the inside
+iptables -A LAN_BROADCAST -i $LAN -p udp --sport 67:68 --dport 67:68 -j ACCEPT
+# Block everything else (do not bother to log broadcast traffic)
+iptables -A LAN_BROADCAST -j DROP
+##############################################################################################
+
+###########################
+# INTERNET_GATEWAY #
+##############################################################################################
+# Allow already established connections from RSS to Internet to come back to RSS
+iptables -A INTERNET_GATEWAY -p all -j ACCEPT
+##############################################################################################
+
+########################
+# CHAINE GATEWAY_LAN #
+##############################################################################################
+# Block potential ICMP redirect sent from us (could be caused by a misconfigured sysctl)
+iptables -A GATEWAY_LAN -p icmp -m icmp --icmp-type redirect -m limit --limit 1/s -j LOG --log-prefix \
+"[IPTABLES: ICMP REDIRECT]"
+
+iptables -A GATEWAY_LAN -p icmp -m icmp --icmp-type redirect -j DROP
+
+# Allow LAN established connections to Raspberry to come back to the LAN
+iptables -A GATEWAY_LAN -p tcp -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A GATEWAY_LAN -p udp -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A GATEWAY_LAN -p icmp -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# Allow DHCP related traffic
+iptables -A GATEWAY_LAN -p udp --sport 67:68 --dport 67:68 -j ACCEPT
+
+# Allow Raspi to ping the LAN
+iptables -A GATEWAY_LAN -p icmp -m icmp --icmp-type echo-request -m state --state NEW -j ACCEPT
+
+# Block & Log everything else
+iptables -A GATEWAY_LAN -m limit --limit 1/s -j LOG --log-prefix "[IPTABLES: GATEWAY_LAN]"
+iptables -A GATEWAY_LAN -j DROP
+##############################################################################################
+
+#####################
+# GATEWAY_BROADCAST #
+##############################################################################################
+# Allow broadcast DHCP replies from RSS
+iptables -A GATEWAY_BROADCAST -p udp --sport 67:68 --dport 67:68 -j ACCEPT
+
+# Block & Log everything else
+iptables -A GATEWAY_BROADCAST -m limit --limit 1/s -j LOG --log-prefix "[IPTABLES: GATEWAY_BROADCAST]"
+iptables -A GATEWAY_BROADCAST -j DROP
+##############################################################################################
+
+####################
+# GATEWAY_INTERNET #
+##############################################################################################
+# Allow new connections from Raspberry (necessary for updates, installing packages, etc...)
+# I do not run updates the night, consequently there is no need for the rule to be active 24/24
+iptables -A GATEWAY_INTERNET -p tcp -m multiport --dports ftp,http,https -m time --timestart 09:00 --timestop \
+23:00 -j ACCEPT
+
+# Résolutions DNS
+iptables -A GATEWAY_INTERNET -p udp --sport $UNPRIV_PORTS -d $DNS_SERVER1 --dport domain -j ACCEPT
+iptables -A GATEWAY_INTERNET -p udp --sport $UNPRIV_PORTS -d $DNS_SERVER2 --dport domain -j ACCEPT
+iptables -A GATEWAY_INTERNET -p tcp --sport $UNPRIV_PORTS -d $DNS_SERVER1 --dport domain -j ACCEPT
+iptables -A GATEWAY_INTERNET -p tcp --sport $UNPRIV_PORTS -d $DNS_SERVER2 --dport domain -j ACCEPT
+
+# Happens when reloading firewall rules
+iptables -A GATEWAY_INTERNET -p icmp -m icmp --icmp-type port-unreachable -d $DNS_SERVER1 -j DROP
+iptables -A GATEWAY_INTERNET -p icmp -m icmp --icmp-type port-unreachable -d $DNS_SERVER2 -j DROP
+
+# Allow NTP
+iptables -A GATEWAY_INTERNET -p udp --dport ntp -j ACCEPT
+
+# Block & Log everything else
+iptables -A GATEWAY_INTERNET -m limit --limit 1/s -j LOG --log-prefix "[IPTABLES: GATEWAY_INTERNET]"
+iptables -A GATEWAY_INTERNET -j DROP
+##############################################################################################
+
+## RULES END ##
+rules_number=`egrep '\-j' /etc/firewall.advanced | wc -l`
+flows_number=`egrep '\-j' /etc/firewall.flows | wc -l`
+total_rules=$(( rules_number+flows_number ))
+echo ""
+echo "$total_rules rules loaded."
+echo ""
+
+B - Basic ruleset
+This script basically does the following :
+- Blocks inbound/outbound invalid TCP flags (even from established flows)
+- Optimises DNS queries (IP TOS field)
+- Adds randomness to the NAT process
+- Drops inbound packets with low TTL (could mean a ttl expiry attack or a traceroute)
+
+This ruleset allows everything from your LAN to be forwarded on the Internet, thus theoretically not requiring to be modified afterwards. If you want to add an extra layer of network security for your grandmother or parents for instance, but that you cannot expect them to modify iptables rules(!), I think that this ruleset is more appropriate.
+
+$ sudo vi /etc/firewall.simple
+#!/bin/bash
+
+# Date August 2012
+# Author : Guillaume Kaddouch
+# URL : http://networkfilter.blogspot.com
+# Version : Standard 1.0
+
+echo "Setting up variables"
+# VARIABLES TO CUSTOMISE TO MATCH YOUR NETWORK
+LAN="eth0"
+LAN_SUBNET="192.168.1.0/24"
+DHCP_RANGE="192.168.1.10-192.168.1.20"
+DNS_SERVER1="8.8.8.8"
+DNS_SERVER2="208.67.222.222"
+RSS="192.168.1.3"
+MODEM_ROUTER="192.168.1.1"
+UNPRIV_PORTS="1024:65535"
+SSH="15507"
+NTP_SERVER="65.55.21.22"
+
+echo "Flushing existing chains and rules..."
+# FLUSHING CHAINS & RULES
+iptables -t filter -F
+iptables -t filter -X
+iptables -t nat -F
+iptables -t nat -X
+iptables -t mangle -F
+iptables -t mangle -X
+
+echo "Setting up default policies"
+# DEFAULT POLICIES
+iptables -P INPUT DROP
+iptables -P OUTPUT DROP
+iptables -P FORWARD DROP
+
+# LOOPBACK
+iptables -A INPUT -i lo -j ACCEPT
+iptables -A OUTPUT -o lo -j ACCEPT
+
+echo "Creating chains"
+
+# CHAIN TO CHECK, LOG, AND OPTIMISE
+iptables -N CHECK_TCP_FLAGS
+iptables -N LOGDROP_TCP_FLAGS
+iptables -t mangle -N FAST_DNS
+
+echo "Loading rules"
+#################################
+# PROTOCOL CHECK & OPTIMIZATION #
+##############################################################################################
+iptables -A FORWARD -i $LAN -p tcp --ipv4 -j CHECK_TCP_FLAGS
+iptables -A INPUT -i $LAN -p tcp --ipv4 -j CHECK_TCP_FLAGS
+
+iptables -t mangle -A OUTPUT -o $LAN -p tcp --ipv4 -s $RSS -m pkttype --pkt-type unicast --dport domain \
+-m state --state NEW,ESTABLISHED,RELATED -j FAST_DNS
+
+iptables -t mangle -A OUTPUT -o $LAN -p udp --ipv4 -s $RSS -m pkttype --pkt-type unicast --dport domain \
+-m state --state NEW,ESTABLISHED,RELATED -j FAST_DNS
+##############################################################################################
+
+###################
+# CHECK_TCP_FLAGS #
+##############################################################################################
+iptables -A CHECK_TCP_FLAGS -p tcp --tcp-flags ACK,FIN FIN -j LOGDROP_TCP_FLAGS
+iptables -A CHECK_TCP_FLAGS -p tcp --tcp-flags ACK,PSH PSH -j LOGDROP_TCP_FLAGS
+iptables -A CHECK_TCP_FLAGS -p tcp --tcp-flags ACK,URG URG -j LOGDROP_TCP_FLAGS
+iptables -A CHECK_TCP_FLAGS -p tcp --tcp-flags FIN,RST FIN,RST -j LOGDROP_TCP_FLAGS
+iptables -A CHECK_TCP_FLAGS -p tcp --tcp-flags SYN,FIN SYN,FIN -j LOGDROP_TCP_FLAGS
+iptables -A CHECK_TCP_FLAGS -p tcp --tcp-flags SYN,RST SYN,RST -j LOGDROP_TCP_FLAGS
+iptables -A CHECK_TCP_FLAGS -p tcp --tcp-flags ALL ALL -j LOGDROP_TCP_FLAGS
+iptables -A CHECK_TCP_FLAGS -p tcp --tcp-flags ALL NONE -j LOGDROP_TCP_FLAGS
+iptables -A CHECK_TCP_FLAGS -p tcp --tcp-flags ALL FIN,PSH,URG -j LOGDROP_TCP_FLAGS
+iptables -A CHECK_TCP_FLAGS -p tcp --tcp-flags ALL SYN,FIN,PSH,URG -j LOGDROP_TCP_FLAGS
+iptables -A CHECK_TCP_FLAGS -p tcp --tcp-flags ALL SYN,RST,ACK,FIN,URG -j LOGDROP_TCP_FLAGS
+
+iptables -A LOGDROP_TCP_FLAGS -m limit --limit 1/s -j LOG --log-tcp-options --log-prefix \
+"[IPTABLES: BAD TCP FLAGS]"
+
+iptables -A LOGDROP_TCP_FLAGS -j DROP
+##############################################################################################
+
+############
+# FAST_DNS #
+##############################################################################################
+iptables -t mangle -A FAST_DNS -p udp -d $DNS_SERVER1 -j TOS --set-tos Minimize-Delay
+iptables -t mangle -A FAST_DNS -p udp -d $DNS_SERVER2 -j TOS --set-tos Minimize-Delay
+iptables -t mangle -A FAST_DNS -p tcp -d $DNS_SERVER1 -j TOS --set-tos Minimize-Delay
+iptables -t mangle -A FAST_DNS -p tcp -d $DNS_SERVER2 -j TOS --set-tos Minimize-Delay
+##############################################################################################
+
+#######
+# NAT #
+##############################################################################################
+iptables -t nat -A POSTROUTING -o $LAN ! -d $LAN_SUBNET -m state --state NEW,ESTABLISHED,RELATED -j MASQUERADE\
+--random
+##############################################################################################
+
+###########
+# FORWARD #
+##############################################################################################
+# Allow outgoing forward of any connection
+iptables -A FORWARD -p tcp -i $LAN -s $LAN_SUBNET ! -d $LAN_SUBNET -m state --state NEW,ESTABLISHED,RELATED \
+-j ACCEPT
+
+iptables -A FORWARD -p udp -i $LAN -s $LAN_SUBNET ! -d $LAN_SUBNET -m state --state NEW,ESTABLISHED,RELATED \
+-j ACCEPT
+
+iptables -A FORWARD -p icmp -i $LAN -s $LAN_SUBNET ! -d $LAN_SUBNET -m state --state NEW,ESTABLISHED,RELATED \
+-j ACCEPT
+
+# Allow incoming forward of established or related connections with TTL greater than 10
+iptables -A FORWARD -p tcp -i $LAN ! -s $LAN_SUBNET -d $LAN_SUBNET -m state --state ESTABLISHED,RELATED -m \
+ttl --ttl-gt 10 -j ACCEPT
+
+iptables -A FORWARD -p udp -i $LAN ! -s $LAN_SUBNET -d $LAN_SUBNET -m state --state ESTABLISHED,RELATED -m \
+ttl --ttl-gt 10 -j ACCEPT
+
+iptables -A FORWARD -p icmp -i $LAN ! -s $LAN_SUBNET -d $LAN_SUBNET -m state --state ESTABLISHED,RELATED -m \
+ttl --ttl-gt 10 -j ACCEPT
+##############################################################################################
+
+#########
+# INPUT #
+##############################################################################################
+# Allow DHCP broadcasts from the inside
+iptables -A INPUT -i $LAN -p udp -s $LAN_SUBNET --sport 67:68 --dport 67:68 -j ACCEPT
+
+# Allow DNS queries from the LAN to the Raspberry
+iptables -A INPUT -i $LAN -p udp -s $LAN_SUBNET --sport $UNPRIV_PORTS -d $RSS --dport 53 -j ACCEPT
+iptables -A INPUT -i $LAN -p tcp -s $LAN_SUBNET --sport $UNPRIV_PORTS -d $RSS --dport 53 -j ACCEPT
+
+# SSH connections
+iptables -A INPUT -i $LAN -p tcp -s $LAN_SUBNET --sport $UNPRIV_PORTS -d $RSS --dport $SSH -j ACCEPT
+
+# ICMP LAN (Type 3 = unreachable [destination|port|protocol])
+iptables -A INPUT -p icmp -m icmp --icmp-type echo-request -s $LAN_SUBNET -d $RSS -j ACCEPT
+iptables -A INPUT -p icmp -m icmp --icmp-type 3 -s $LAN_SUBNET -d $RSS -j ACCEPT
+
+# Allow already established connections from Raspberry to Internet to come back to itl
+iptables -A INPUT -i $LAN ! -s $LAN_SUBNET -d $RSS -p tcp -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A INPUT -i $LAN ! -s $LAN_SUBNET -d $RSS -p udp -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A INPUT -i $LAN ! -s $LAN_SUBNET -d $RSS -p icmp -m state --state ESTABLISHED,RELATED -j ACCEPT
+##############################################################################################
+
+###########
+# OUTPUT #
+##############################################################################################
+# Block potential ICMP redirect sent from us (could be caused by a misconfigured sysctl)
+iptables -A OUTPUT -o $LAN -p icmp -m icmp --icmp-type redirect -m limit --limit 1/s -j LOG --log-prefix \
+"[IPTABLES: ICMP REDIRECT]"
+
+iptables -A OUTPUT -o $LAN -p icmp -m icmp --icmp-type redirect -j DROP
+
+# Allow LAN established connections to the Raspi to come back to the LAN
+iptables -A OUTPUT -o $LAN -p tcp -s $RSS -d $LAN_SUBNET -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A OUTPUT -o $LAN -p udp -s $RSS -d $LAN_SUBNET -m state --state ESTABLISHED,RELATED -j ACCEPT
+iptables -A OUTPUT -o $LAN -p icmp -s $RSS -d $LAN_SUBNET -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# Allow DHCP related traffic
+iptables -A OUTPUT -o $LAN -p udp -s $RSS -d $LAN_SUBNET --sport 67:68 --dport 67:68 -j ACCEPT
+
+# Allow Raspberry to ping the LAN
+iptables -A OUTPUT -o $LAN -p icmp -m icmp --icmp-type echo-request -s $RSS -d $LAN_SUBNET -m state \
+--state NEW -j ACCEPT
+
+# Allow new connections from Raspberry (necessary for updates, installing packages, etc...)
+iptables -A OUTPUT -o $LAN -p tcp -s $RSS ! -d $LAN_SUBNET -m state --state NEW,ESTABLISHED,RELATED \
+-j ACCEPT
+
+iptables -A OUTPUT -o $LAN -p udp -s $RSS ! -d $LAN_SUBNET -m state --state NEW,ESTABLISHED,RELATED \
+-j ACCEPT
+
+iptables -A OUTPUT -o $LAN -p icmp -s $RSS ! -d $LAN_SUBNET -m state --state NEW,ESTABLISHED,RELATED \
+-j ACCEPT
+
+# DNS requests
+iptables -A OUTPUT -o $LAN -p udp -s $RSS --sport $UNPRIV_PORTS -d $DNS_SERVER1 --dport domain -j ACCEPT
+iptables -A OUTPUT -o $LAN -p udp -s $RSS --sport $UNPRIV_PORTS -d $DNS_SERVER2 --dport domain -j ACCEPT
+iptables -A OUTPUT -o $LAN -p tcp -s $RSS --sport $UNPRIV_PORTS -d $DNS_SERVER1 --dport domain -j ACCEPT
+iptables -A OUTPUT -o $LAN -p tcp -s $RSS --sport $UNPRIV_PORTS -d $DNS_SERVER2 --dport domain -j ACCEPT
+# Allow NTP
+iptables -A OUTPUT -o $LAN -p udp --dport ntp -s $RSS -j ACCEPT
+##############################################################################################
+
+iptables -A INPUT -m limit --limit 1/s -j LOG --log-prefix "[IPTABLES: INPUT DROP]"
+iptables -A INPUT -j DROP
+iptables -A OUTPUT -m limit --limit 1/s -j LOG --log-prefix "[IPTABLES: OUTPUT DROP]"
+iptables -A OUTPUT -j DROP
+iptables -A FORWARD -m limit --limit 1/s -j LOG --log-prefix "[IPTABLES: FORWARD DROP]"
+iptables -A FORWARD -j DROP
+
+## RULES END ##
+rules_number=`egrep '\-j' /etc/firewall.simple | wc -l`
+echo ""
+echo "$rules_number rules loaded."
+echo ""
+
+These two rulesets are just examples, if you have one ready use your own.
+
+To load iptables rules at startup, one way is to do as follow :
+$ sudo vi /etc/rc.local
+echo "Loading iptables rules"
+/etc/firewall.VERSION >> /dev/nul
+
+Replace VERSION with either "advanced" or "simple", without quotes, depending on the script you are using.
+
+If you want to display alerts in realtime, type the following :
+$ sudo tail -f /var/log/iptables.log
+Step 12: Syslog
+
+Security warnings aare useless if they're not logged. You also should consider how long you want to keep your logs. For private use 12 weeks are enough
+
+Now let's set a log rotation time to keep logs 3 months :
+$ sudo vi /etc/logrotate.conf
+# see "man logrotate" for details
+# rotate log files weekly
+weekly
+
+# keep 12 weeks worth of backlogs
+rotate 12
+
+Step 13: SNORT
+SNORT
+
+Snort is one of the best open source Network Intrusion Detection System (NIDS). Looking at packets payload is what cannot be done by iptables efficiently (or only in very basic forms, by looking at strings with the "-m string" module). Snort looks deeper into packets payloads allowing it to detect malicious traffic.
+
+The major problem here is to get it running on the Raspberry with it's CPU and RAM limitations
+
+First we have to install it:
+
+$ sudo pacman -S snort
+
+To shrink it down we'll do our first modifications:
+
+$ sudo vi /etc/snort/snort.conf
+# Step 1 : variables
+#########################################################################################################################
+ipvar HOME_NET [192.168.1.0/24]
+ipvar EXTERNAL_NET !$HOME_NET
+ipvar DNS_SERVERS [192.168.1.3]
+ipvar SMTP_SERVERS $HOME_NET
+ipvar HTTP_SERVERS $HOME_NET
+ipvar SQL_SERVERS $HOME_NET
+ipvar TELNET_SERVERS $HOME_NET
+ipvar FTP_SERVERS $HOME_NET
+ipvar SIP_SERVERS $HOME_NET
+portvar HTTP_PORTS 80
+portvar ORACLE_PORTS 1024:
+portvar FTP_PORTS [21,2100,3535]
+portvar SIP_PORTS [5060,5061,5600]
+portvar FILE_DATA_PORTS [$HTTP_PORTS,110,143]
+ipvar SSH_SERVERS [192.168.1.3]
+portvar SHELLCODE_PORTS !80
+portvar SSH_PORTS [22,15507]
+portvar GTP_PORTS [2123,2152,3386]
+ipvar AIM_SERVERS [64.12.24.0/23,64.12.28.0/23,64.12.161.0/24,64.12.163.0/24,64.12.200.0/24,205.188.3.0/24,205.188.5.0/24,205.188.7.0/24,205.188.9.0/24,205.188.153.0/24,205.188.179.0/24,205.188.248.0/24]
+
+var RULE_PATH /etc/snort/rules
+var SO_RULE_PATH ../so_rules
+var PREPROC_RULE_PATH ../preproc_rules
+var WHITE_LIST_PATH $RULE_PATH
+var BLACK_LIST_PATH $RULE_PATH
+
+# Step #2: Configure the decoder. For more information, see README.decode
+#########################################################################################################################
+config disable_decode_alerts
+config disable_tcpopt_experimental_alerts
+config disable_tcpopt_obsolete_alerts
+config disable_tcpopt_ttcp_alerts
+config disable_tcpopt_alerts
+config disable_ipopt_alerts
+config checksum_mode: all
+
+# Step #3: Configure the base detection engine. For more information, see README.decode
+#########################################################################################################################
+config pcre_match_limit: 3500
+config pcre_match_limit_recursion: 1500
+
+# This setting is very important :
+# "lowmem" is required for Snort to run with low memory
+config detection: search-method lowmem search-optimize max-pattern-len 20
+
+config event_queue: max_queue 8 log 3 order_events content_length
+config paf_max: 16000
+
+# Step #4: Configure dynamic loaded libraries.
+#########################################################################################################################
+dynamicpreprocessor directory /usr/lib/snort_dynamicpreprocessor/
+dynamicengine /usr/lib/snort_dynamicengine/libsf_engine.so
+
+# Step #5: Configure preprocessors
+#########################################################################################################################
+preprocessor normalize_ip4
+preprocessor normalize_tcp: ips ecn stream
+preprocessor normalize_icmp4
+preprocessor normalize_ip6
+preprocessor normalize_icmp6
+preprocessor frag3_global: max_frags 65536
+preprocessor frag3_engine: policy windows detect_anomalies overlap_limit 10 min_fragment_length 100 timeout 180
+
+# Target-Based stateful inspection/stream reassembly. For more inforation, see README.stream5
+preprocessor stream5_global: track_tcp yes, \
+track_udp yes, \
+track_icmp no, \
+max_tcp 262144, \
+max_udp 131072, \
+max_active_responses 2, \
+min_response_seconds 5
+preprocessor stream5_tcp: policy windows, detect_anomalies, require_3whs 180, \
+overlap_limit 10, small_segments 3 bytes 150, timeout 180, \
+ports client 21 22 23 25 42 53 79 109 110 111 113 119 135 136 137 139 143 \
+161 445 513 514 587 593 691 1433 1521 2100 3306 6070 6665 6666 6667 6668 6669 \
+7000 8181 32770 32771 32772 32773 32774 32775 32776 32777 32778 32779, \
+ports both 80 81 311 443 465 563 591 593 636 901 989 992 993 994 995 1220 1414 1830 2301 2381 2809 3128 3702 4343 5250 7907 7001 7145 7510 7802 7777 7779 \
+7801 7900 7901 7902 7903 7904 7905 7906 7908 7909 7910 7911 7912 7913 7914 7915 7916 \
+7917 7918 7919 7920 8000 8008 8014 8028 8080 8088 8118 8123 8180 8243 8280 8800 8888 8899 9080 9090 9091 9443 9999 11371 55555
+preprocessor stream5_udp: timeout 180
+
+# HTTP normalization and anomaly detection. For more information, see README.http_inspect
+preprocessor http_inspect: global iis_unicode_map unicode.map 1252 compress_depth 65535 decompress_depth 65535
+preprocessor http_inspect_server: server default \
+http_methods { GET POST PUT SEARCH MKCOL COPY MOVE LOCK UNLOCK NOTIFY POLL BCOPY BDELETE BMOVE LINK UNLINK OPTIONS HEAD DELETE TRACE TRACK CONNECT SOURCE SUBSCRIBE UNSUBSCRIBE PROPFIND PROPPATCH BPROPFIND BPROPPATCH RPC_CONNECT PROXY_SUCCESS BITS_POST CCM_POST SMS_POST RPC_IN_DATA RPC_OUT_DATA RPC_ECHO_DATA } \
+chunk_length 500000 \
+server_flow_depth 0 \
+client_flow_depth 0 \
+post_depth 65495 \
+oversize_dir_length 500 \
+max_header_length 750 \
+max_headers 100 \
+max_spaces 0 \
+small_chunk_length { 10 5 } \
+ports { 80 81 311 591 593 901 1220 1414 1830 2301 2381 2809 3128 3702 4343 5250 7001 7145 7510 7777 7779 8000 8008 8014 8028 8080 8088 8118 8123 8180 8181 8243 8280 8800 8888 8899 9080 9090 9091 9443 9999 11371 55555 } \
+non_rfc_char { 0x00 0x01 0x02 0x03 0x04 0x05 0x06 0x07 } \
+enable_cookie \
+extended_response_inspection \
+inspect_gzip \
+normalize_utf \
+unlimited_decompress \
+normalize_javascript \
+apache_whitespace no \
+ascii no \
+bare_byte no \
+directory no \
+double_decode no \
+iis_backslash no \
+iis_delimiter no \
+iis_unicode no \
+multi_slash no \
+utf_8 no \
+u_encode yes \
+webroot no
+
+# ONC-RPC normalization and anomaly detection. For more information, see the Snort Manual, Configuring Snort - Preprocessors - RPC Decode
+preprocessor rpc_decode: 111 32770 32771 32772 32773 32774 32775 32776 32777 32778 32779 no_alert_multiple_requests no_alert_large_fragments no_alert_incomplete
+
+# Back Orifice detection.
+preprocessor bo
+
+# FTP / Telnet normalization and anomaly detection. For more information, see README.ftptelnet
+preprocessor ftp_telnet: global inspection_type stateful encrypted_traffic no
+preprocessor ftp_telnet_protocol: telnet \
+ayt_attack_thresh 20 \
+normalize ports { 23 } \
+detect_anomalies
+preprocessor ftp_telnet_protocol: ftp server default \
+def_max_param_len 100 \
+ports { 21 2100 3535 } \
+telnet_cmds yes \
+ignore_telnet_erase_cmds yes \
+ftp_cmds { ABOR ACCT ADAT ALLO APPE AUTH CCC CDUP } \
+ftp_cmds { CEL CLNT CMD CONF CWD DELE ENC EPRT } \
+ftp_cmds { EPSV ESTA ESTP FEAT HELP LANG LIST LPRT } \
+ftp_cmds { LPSV MACB MAIL MDTM MIC MKD MLSD MLST } \
+ftp_cmds { MODE NLST NOOP OPTS PASS PASV PBSZ PORT } \
+ftp_cmds { PROT PWD QUIT REIN REST RETR RMD RNFR } \
+ftp_cmds { RNTO SDUP SITE SIZE SMNT STAT STOR STOU } \
+ftp_cmds { STRU SYST TEST TYPE USER XCUP XCRC XCWD } \
+ftp_cmds { XMAS XMD5 XMKD XPWD XRCP XRMD XRSQ XSEM } \
+ftp_cmds { XSEN XSHA1 XSHA256 } \
+alt_max_param_len 0 { ABOR CCC CDUP ESTA FEAT LPSV NOOP PASV PWD QUIT REIN STOU SYST XCUP XPWD } \
+alt_max_param_len 200 { ALLO APPE CMD HELP NLST RETR RNFR STOR STOU XMKD } \
+alt_max_param_len 256 { CWD RNTO } \
+alt_max_param_len 400 { PORT } \
+alt_max_param_len 512 { SIZE } \
+chk_str_fmt { ACCT ADAT ALLO APPE AUTH CEL CLNT CMD } \
+chk_str_fmt { CONF CWD DELE ENC EPRT EPSV ESTP HELP } \
+chk_str_fmt { LANG LIST LPRT MACB MAIL MDTM MIC MKD } \
+chk_str_fmt { MLSD MLST MODE NLST OPTS PASS PBSZ PORT } \
+chk_str_fmt { PROT REST RETR RMD RNFR RNTO SDUP SITE } \
+chk_str_fmt { SIZE SMNT STAT STOR STRU TEST TYPE USER } \
+chk_str_fmt { XCRC XCWD XMAS XMD5 XMKD XRCP XRMD XRSQ } \
+chk_str_fmt { XSEM XSEN XSHA1 XSHA256 } \
+cmd_validity ALLO < int [ char R int ] > \
+cmd_validity EPSV < [ { char 12 | char A char L char L } ] > \
+cmd_validity MACB < string > \
+cmd_validity MDTM < [ date nnnnnnnnnnnnnn[.n[n[n]]] ] string > \
+cmd_validity MODE < char ASBCZ > \
+cmd_validity PORT < host_port > \
+cmd_validity PROT < char CSEP > \
+cmd_validity STRU < char FRPO [ string ] > \
+cmd_validity TYPE < { char AE [ char NTC ] | char I | char L [ number ] } >
+preprocessor ftp_telnet_protocol: ftp client default \
+max_resp_len 256 \
+bounce yes \
+ignore_telnet_erase_cmds yes \
+telnet_cmds yes
+# SMTP normalization and anomaly detection. For more information, see README.SMTP
+preprocessor smtp: ports { 25 465 587 691 } \
+inspection_type stateful \
+b64_decode_depth 0 \
+qp_decode_depth 0 \
+bitenc_decode_depth 0 \
+uu_decode_depth 0 \
+log_mailfrom \
+log_rcptto \
+log_filename \
+log_email_hdrs \
+normalize cmds \
+normalize_cmds { ATRN AUTH BDAT CHUNKING DATA DEBUG EHLO EMAL ESAM ESND ESOM ETRN EVFY } \
+normalize_cmds { EXPN HELO HELP IDENT MAIL NOOP ONEX QUEU QUIT RCPT RSET SAML SEND SOML } \
+normalize_cmds { STARTTLS TICK TIME TURN TURNME VERB VRFY X-ADAT X-DRCP X-ERCP X-EXCH50 } \
+normalize_cmds { X-EXPS X-LINK2STATE XADR XAUTH XCIR XEXCH50 XGEN XLICENSE XQUE XSTA XTRN XUSR } \
+max_command_line_len 512 \
+max_header_line_len 1000 \
+
+max_response_line_len 512 \
+alt_max_command_line_len 260 { MAIL } \
+alt_max_command_line_len 300 { RCPT } \
+alt_max_command_line_len 500 { HELP HELO ETRN EHLO } \
+alt_max_command_line_len 255 { EXPN VRFY ATRN SIZE BDAT DEBUG EMAL ESAM ESND ESOM EVFY IDENT NOOP RSET } \
+alt_max_command_line_len 246 { SEND SAML SOML AUTH TURN ETRN DATA RSET QUIT ONEX QUEU STARTTLS TICK TIME TURNME VERB X-EXPS X-LINK2STATE XADR XAUTH XCIR XEXCH50 XGEN XLICENSE XQUE XSTA XTRN XUSR } \
+valid_cmds { ATRN AUTH BDAT CHUNKING DATA DEBUG EHLO EMAL ESAM ESND ESOM ETRN EVFY } \
+valid_cmds { EXPN HELO HELP IDENT MAIL NOOP ONEX QUEU QUIT RCPT RSET SAML SEND SOML } \
+valid_cmds { STARTTLS TICK TIME TURN TURNME VERB VRFY X-ADAT X-DRCP X-ERCP X-EXCH50 } \
+valid_cmds { X-EXPS X-LINK2STATE XADR XAUTH XCIR XEXCH50 XGEN XLICENSE XQUE XSTA XTRN XUSR } \
+xlink2state { enabled }
+
+# Portscan detection. For more information, see README.sfportscan
+# preprocessor sfportscan: proto { all } memcap { 10000000 } sense_level { low }
+
+# ARP spoof detection. For more information, see the Snort Manual - Configuring Snort - Preprocessors - ARP Spoof Preprocessor
+# preprocessor arpspoof
+# preprocessor arpspoof_detect_host: 192.168.40.1 f0:0f:00:f0:0f:00
+
+# SSH anomaly detection. For more information, see README.ssh
+preprocessor ssh: server_ports { 22 15507 } \
+autodetect \
+max_client_bytes 19600 \
+max_encrypted_packets 20 \
+max_server_version_len 100 \
+enable_respoverflow enable_ssh1crc32 \
+enable_srvoverflow enable_protomismatch
+
+# SMB / DCE-RPC normalization and anomaly detection. For more information, see README.dcerpc2
+preprocessor dcerpc2: memcap 102400, events [co ]
+preprocessor dcerpc2_server: default, policy WinXP, \
+detect [smb [139,445], tcp 135, udp 135, rpc-over-http-server 593], \
+autodetect [tcp 1025:, udp 1025:, rpc-over-http-server 1025:], \
+smb_max_chain 3, smb_invalid_shares ["C$", "D$", "ADMIN$"]
+
+# DNS anomaly detection. For more information, see README.dns
+preprocessor dns: ports { 53 } enable_rdata_overflow
+
+# SSL anomaly detection and traffic bypass. For more information, see README.ssl
+preprocessor ssl: ports { 443 465 563 636 989 992 993 994 995 7801 7802 7900 7901 7902 7903 7904 7905 7906 7907 7908 7909 7910 7911 7912 7913 7914 7915 7916 7917 7918 7919 7920 }, trustservers, noinspect_encrypted
+
+# SDF sensitive data preprocessor. For more information see README.sensitive_data
+preprocessor sensitive_data: alert_threshold 25
+
+# Modbus preprocessor. For more information see README.modbus
+preprocessor modbus: ports { 502 }
+
+# DNP3 preprocessor. For more information see README.dnp3
+preprocessor dnp3: ports { 20000 } \
+memcap 262144 \
+check_crc
+
+# Reputation preprocessor. For more information see README.reputation
+preprocessor reputation: \
+memcap 500, \
+priority whitelist, \
+nested_ip inner, \
+whitelist $WHITE_LIST_PATH/white_list.rules, \
+blacklist $BLACK_LIST_PATH/black_list.rules
+
+# Step #6: Configure output plugins
+#########################################################################################################################
+include classification.config
+include reference.config
+
+# Step #7: Customize your rule set
+#########################################################################################################################
+include $RULE_PATH/local.rules
+# Minimal rules for home NIDS (6 files)
+include $RULE_PATH/attack-responses.rules
+include $RULE_PATH/backdoor.rules
+include $RULE_PATH/botnet-cnc.rules
+include $RULE_PATH/spyware-put.rules
+include $RULE_PATH/virus.rules
+include $RULE_PATH/web-client.rules
+
+# Additional rules (15 files)
+include $RULE_PATH/bad-traffic.rules
+include $RULE_PATH/ddos.rules
+include $RULE_PATH/dns.rules
+include $RULE_PATH/dos.rules
+include $RULE_PATH/exploit.rules
+include $RULE_PATH/ftp.rules
+include $RULE_PATH/netbios.rules
+include $RULE_PATH/p2p.rules
+include $RULE_PATH/phishing-spam.rules
+include $RULE_PATH/rpc.rules
+include $RULE_PATH/scan.rules
+include $RULE_PATH/shellcode.rules
+include $RULE_PATH/smtp.rules
+include $RULE_PATH/specific-threats.rules
+include $RULE_PATH/telnet.rules
+
+## TOTAL FILES = 21 files to load
+
+# Other disabled files : Suit yourself
+#include $RULE_PATH/blacklist.rules
+#include $RULE_PATH/pop3.rules
+#include $RULE_PATH/rservices.rules
+#include $RULE_PATH/scada.rules
+#include $RULE_PATH/snmp.rules
+#include $RULE_PATH/sql.rules
+#include $RULE_PATH/tftp.rules
+#include $RULE_PATH/voip.rules
+#include $RULE_PATH/web-activex.rules
+#include $RULE_PATH/web-attacks.rules
+#include $RULE_PATH/web-cgi.rules
+#include $RULE_PATH/web-coldfusion.rules
+#include $RULE_PATH/web-frontpage.rules
+#include $RULE_PATH/web-iis.rules
+#include $RULE_PATH/web-misc.rules
+#include $RULE_PATH/web-php.rules
+#include $RULE_PATH/x11.rules
+
+###################################################
+# Step #8: Customize your preprocessor and decoder alerts
+# For more information, see README.decoder_preproc_rules
+###################################################
+
+# decoder and preprocessor event rules
+# include $PREPROC_RULE_PATH/preprocessor.rules
+# include $PREPROC_RULE_PATH/decoder.rules
+# include $PREPROC_RULE_PATH/sensitive-data.rules
+
+###################################################
+# Step #9: Customize your Shared Object Snort Rules
+# For more information, see http://vrt-sourcefire.blogspot.com/2009/01/using-vrt-certified-shared-object-rules.html
+###################################################
+
+# dynamic library rules
+# include $SO_RULE_PATH/bad-traffic.rules
+# include $SO_RULE_PATH/chat.rules
+# include $SO_RULE_PATH/dos.rules
+# include $SO_RULE_PATH/exploit.rules
+# include $SO_RULE_PATH/icmp.rules
+# include $SO_RULE_PATH/imap.rules
+# include $SO_RULE_PATH/misc.rules
+# include $SO_RULE_PATH/multimedia.rules
+# include $SO_RULE_PATH/netbios.rules
+# include $SO_RULE_PATH/nntp.rules
+# include $SO_RULE_PATH/p2p.rules
+# include $SO_RULE_PATH/smtp.rules
+# include $SO_RULE_PATH/snmp.rules
+# include $SO_RULE_PATH/specific-threats.rules
+# include $SO_RULE_PATH/web-activex.rules
+# include $SO_RULE_PATH/web-client.rules
+# include $SO_RULE_PATH/web-iis.rules
+# include $SO_RULE_PATH/web-misc.rules
+
+# Event thresholding or suppression commands. See threshold.conf
+include threshold.conf
+
+#include $RULE_PATH/chat.rules
+#include $RULE_PATH/content-replace.rules
+#include $RULE_PATH/file-identify.rules
+#include $RULE_PATH/finger.rules
+#include $RULE_PATH/icmp.rules
+#include $RULE_PATH/icmp-info.rules
+#include $RULE_PATH/imap.rules
+#include $RULE_PATH/info.rules
+#include $RULE_PATH/misc.rules
+#include $RULE_PATH/multimedia.rules
+#include $RULE_PATH/mysql.rules
+#include $RULE_PATH/nntp.rules
+#include $RULE_PATH/oracle.rules
+#include $RULE_PATH/other-ids.rules
+#include $RULE_PATH/policy.rules
+#include $RULE_PATH/pop2.rules
+
+We are acting on three things to help snort using less CPU and memory :
+- loading less preprocessors
+- loading less rules
+- setting the "lowmem" parameter
+
+By default, Snort does not have any rule. You must register at https://www.snort.org/signup as a free user to be able to download the free snort rules (one month old). Up to date rulesets require to pay a licence.
+
+Once registered, you will need to generate an "OinkCode", that will enable you to download the last free ruleset. To do so, then you receive the activation email, go to the website loggin, click on "Get Rule", "Command Line", "Get an Oinkcode", then click "Generate code".
+
+Once you have it, you can download the ruleset VERSION available (replace it in the command line below, e.g : 2923) :
+$ cd /home/rss
+$ wget http://www.snort.org/reg-rules/snortrules-snapshot-VERSION.tar.gz/oinkcode -O ./snortrules-snapshot-VERSION.tar.gz
+
+Of course replace the above "oinkcode" string by the one you just generated.
+$ tar zxpvf ./snortrules-snapshot-VERSION.tar.gz
+$ sudo mv ./preproc_rules/ /etc/snort/
+$ sudo mv ./rules/ /etc/snort/
+$ sudo mv ./so_rules/ /etc/snort/
+
+Create two files Snort will expect :
+$ touch /etc/snort/rules/white_list.rules
+$ touch /etc/snort/rules/black_list.rules
+
+Check the Snort version installed :
+$ sudo snort –version
+
+Now we will create a test alert rule :
+$ sudo vi /etc/snort/rules/local.rules
+alert icmp any any -> $HOME_NET any (msg:"ICMP test"; sid:10000001;)
+
+Check that Snort's configuration is correct before doing anything (-T parameter) :
+$ sudo snort -A console -q -u snort -g snort -c /etc/snort/snort.conf -i eth0 -T
+
+Everything should be ok, if not, check back the /etc/snort.conf to verify your variables (subnets, ports, and paths).
+
+We can do now a real test, launch Snort in console mode and check if Snort is running and if our alert appears on the screen :
+$ sudo snort -A console -q -u snort -g snort -c /etc/snort/snort.conf -i eth0
+
+Manually launch "ping" commands from one of your LAN computer to the Raspberry, it should trigger an alert (CTRL+C to stop the test). If everything is working now, we could be tempted to say it's won, but it's not :-)
+
+The next logical step is to check Snort startup configuration for the next time you will reboot :
+$ sudo vi /etc/conf.d/snort
+# Where is the snort.conf file.
+SNORT_CONF="/etc/snort/snort.conf"
+
+# What user account should we run under.
+USER="snort"
+
+# What group account should we run under.
+GROUP="snort"
+
+# define the interface we listen on
+INTERFACE="eth0"
+
+# If you are using prelude, delete the '-A fast' option
+SNORT_OPTIONS="-A fast -b -D -p"
+
+Everything seems ok, so let's do a real test by running Snort in daemon mode (-D parameter) :
+$ sudo snort -A console -q -u snort -g snort -c /etc/snort/snort.conf -i eth0 -D
+
+It crashes with the error "fork: Cannot Allocate Memory".
+
+I couldn't figure out at first why Snort would run ok while not in daemon, but would not work otherwise. I played with /etc/security/limits.conf to no avail, believing it was some kind of memory allocation limit.
+
+However, when running again Snort as a user process, not as daemon, I noticed in "htop" that Snort allocated virtual memory (more than 290MB) whereas I do not have any swap file! I then supposed it was a good trail to follow, and thanks to the archlinuxarm documentation, created a swap file :
+$ sudo dd if=/dev/zero of=/swapfile.img bs=1M count=512
+$ sudo mkswap /swapfile.img
+$ sudo swapon /swapfile.img
+
+512MB seems enough regarding what Snort is trying to allocate. Also, it is not recommanded on a flash media, like the SD card, to create a swap file, as more writes will be done to the media, shortening it's lifetime. However, the idea here is to allow Snort to allocate the memory, but hoping that it won't in fact need it (we disabled many preprocessor and rules, remember).
+
+Now, Snort should run with sucess :
+$ sudo snort -A console -q -u snort -g snort -c /etc/snort/snort.conf -i eth0 -D
+
+Congratulations. Also, you can notice in htop that Snort is actually not using any virtual memory, it just allocated it, which is what we wanted.
+
+Let's settle this by activating the swap at startup, first :
+$ sudo vi /etc/fstab
+# add this at the end
+/swapfile.img none swap sw 0 0
+
+Finally add Snort at startup :
+$ sudo vi /etc/rc.conf
+DAEMONS=(!hwclock syslog-ng network @crond @sshd @openntpd dnsmasq snort)
+
+Reboot and check that Snort is running, then that your alert rule still triggers :
+$ sudo reboot
+$ htop
+$ sudo tail –f /var/log/snort/alert
+
+If everything is ok, comment your test rule :
+$ sudo vi /etc/snort/rules/local.rules
+
+Restart Snort :
+$ sudo rc.d restart snort
+
+Regarding performances, for a common browsing I do not notice any slowdown. When I open Google Chrome with 10 or 15 tabs which are all trying to load at once, the Raspberry CPU goes to 100% for a few seconds, like 3 or 4 seconds, but quickly goes back to normal, with no noticeable slowdown in webpage loading.
+
+I think however, regarding the CPU usage when some network traffic happens, that loading more Snort's rules or preprocessor would hinder performances. I find the current tradeoff acceptable regarding security/performance, for home use. Anyway, you can play with the settings if you want more security.
+
+Snort's Rules Update :
+
+If you do not wish to pay anything to have access to updated rules, the available free rules will be one month old. If however you don't mind to pay 30$/year (personal/home use only) for the personal subscription, you will have the most up to date rules for a reasonable price.
+
+Log into your account on snort.org then go to the following link to buy your subscription if you want the latest rules available :
+http://www.snort.org/vrt/buy-a-subscription
+
+Now, to update our snort's rules, we will use PulledPork. Check on their website if a newer version has been released since I wrote this article.
+
+$ wget http://pulledpork.googlecode.com/files/pulledpork-0.6.1.tar.gz
+$ tar zxpvf ./pulledpork-0.6.1.tar.gz
+$ sudo cp pulledpork-0.6.1/etc/*.conf /etc
+$ sudo cp pulledpork-0.6.1/pulledpork.pl /usr/local/bin/
+
+$ sudo vi /etc/pulledpork.conf
+rule_url=https://www.snort.org/reg-rules/|snortrules-snapshot.tar.gz|
+ignore=deleted.rules,experimental.rules,local.rules
+temp_path=/tmp
+out_path=/etc/snort/rules/
+local_rules=/etc/snort/rules/local.rules
+sid_msg=/etc/snort/sid-msg.map
+sid_changelog=/var/log/sid_changes.log
+snort_path=/usr/bin/snort
+config_path=/etc/snort/snort.conf
+backup=/etc/snort
+version=0.6.0
+
+Installing required perl module for pulledpork :
+$ sudo pacman -S make
+$ sudo pacman -S perl-libwww
+$ sudo pacman -S perl-crypt-ssleay
+$ sudo pacman -S perl-switch
+
+And now let's start the update manually first :
+$ sudo touch /etc/snort/sid-msg.map
+$ sudo chown rss:snort /etc/snort/sid-msg.map
+$ pulledpork.pl -k -c /etc/pulledpork.conf -K /etc/snort/rules -o /etc/snort/rules
+
+If you are using the paid version, your rule files will begin with "VRT-", you must edit snort.conf and replace the rules loading at the end with :
+$ sudo vi /etc/snort/snort.conf
+# Minimal rules for home NIDS (5 files)
+# if using the licence version
+include $RULE_PATH/VRT-indicator-compromise.rules
+include $RULE_PATH/VRT-backdoor.rules
+include $RULE_PATH/VRT-botnet-cnc.rules
+include $RULE_PATH/VRT-spyware-put.rules
+include $RULE_PATH/VRT-web-client.rules
+
+# Additional rules (15 files)
+# if using the licence version
+include $RULE_PATH/VRT-bad-traffic.rules
+include $RULE_PATH/VRT-ddos.rules
+include $RULE_PATH/VRT-dns.rules
+include $RULE_PATH/VRT-dos.rules
+include $RULE_PATH/VRT-exploit.rules
+include $RULE_PATH/VRT-ftp.rules
+include $RULE_PATH/VRT-netbios.rules
+include $RULE_PATH/VRT-pua-p2p.rules
+include $RULE_PATH/VRT-phishing-spam.rules
+include $RULE_PATH/VRT-rpc.rules
+include $RULE_PATH/VRT-scan.rules
+include $RULE_PATH/VRT-shellcode.rules
+include $RULE_PATH/VRT-smtp.rules
+include $RULE_PATH/VRT-specific-threats.rules
+include $RULE_PATH/VRT-telnet.rules
+
+We have to restart Snort :
+$ sudo rc.d stop snort
+$ sudo rc.d start snort
+
+Now let's create a task to run pulledpork automatically :
+$ crontab -e
+# Update Snort rules every Sunday at 12h30
+30 12 * * 0 /usr/local/bin/pulledpork.pl -k -c /etc/pulledpork.conf -K /etc/snort/rules -o /etc/snort/rules
+
+# Update Snort rules every Wednesday at 21h00
+00 21 * * 3 /usr/local/bin/pulledpork.pl -k -c /etc/pulledpork.conf -K /etc/snort/rules -o /etc/snort/rules
+
