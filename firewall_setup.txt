@@ -1,0 +1,152 @@
+SSH SETUP :----------------------------------
+
+SSH will allow us to connect remotely from our personal computer, or anything else, by using an SSH client. If you are on Windows, you will be able to use Putty for instance, from Linux you can use ssh from console.
+
+$ sudo vi /etc/ssh/sshd_config
+# Modify the default port
+Port 15507
+
+Protocol 2
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/ssh_host_dsa_key
+UsePrivilegeSeparation yes
+KeyRegenerationInterval 3600
+ServerKeyBits 768
+SyslogFacility AUTH
+LogLevel INFO
+LoginGraceTime 60
+
+# Disable login with the root account
+PermitRootLogin no
+
+StrictModes yes
+RSAAuthentication yes
+PubkeyAuthentication yes
+IgnoreRhosts yes
+RhostsRSAAuthentication no
+HostbasedAuthentication no
+PermitEmptyPasswords no
+ChallengeResponseAuthentication no
+PrintMotd no
+PrintLastLog yes
+TCPKeepAlive yes
+AcceptEnv LANG LC_*
+Subsystem sftp /usr/lib/openssh/sftp-server
+UsePAM yes
+
+$ sudo rc.d restart sshd
+
+Now get to your PC or laptop and try to connect with your user "rss". If everything is fine, you can now disconnect your Raspberry from your monitor or TV set and unplug the keyboard.
+
+SECURITY-SETTINGS :------------------------------------------
+
+Now we customize the default network sysctl parameters to our needs.
+
+$ sudo vi /etc/sysctl.conf
+# Enable Spoof protection (reverse-path filter)
+net.ipv4.conf.default.rp_filter=1
+net.ipv4.conf.all.rp_filter=1
+
+# Enable TCP/IP SYN cookies
+net.ipv4.tcp_syncookies=1
+
+# Ignore ICMP broadcasts
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+
+# Ignore bogus ICMP errors
+net.ipv4.icmp_ignore_bogus_error_responses = 1
+
+# Do not accept ICMP redirects (prevent MITM attacks)
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv4.conf.eth0.accept_redirects = 0
+
+# Do not send ICMP redirects (really important for our single NIC gateway)
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+net.ipv4.conf.eth0.send_redirects = 0
+
+# Do not accept IP source route packets
+net.ipv4.conf.all.accept_source_route = 0
+
+# Log Martian Packets
+net.ipv4.conf.all.log_martians = 1
+
+# router function  (important1!!)
+net.ipv4.ip_forward = 1
+
+# Avoid Out Of Memory
+vm.min_free_kbytes=8192
+
+After saving the settings don't forget to apply the changes :
+$ sudo sysctl –p
+
+
+DHCP AND DNS CONFIGURATION :-----------------------------------
+
+
+Now it's time to set up our DHCP and DNS server.
+
+Having DHCP on our RSS will enable our gateway to send information to new hosts so that :
+- they send all of their traffic through us, as a gateway
+- they send all of their DNS queries to us, as a DNS server
+
+Any new host will be protected by our gateway automatically. That means that the RSS can also be installed on environements where people are not knowledgeable enough to get their hands on it.
+
+The DNS cache/server on it's side, will allow us to have faster DNS replies, as they will be cached. Some common DNS queries are done multiple times, whereas the answer can be cached once, and replied without querying the ISP's DNS servers. The more the computers, the more the gain is visible. The DNS part will also deny incomplete or bad DNS requests, adding to the security brought by the RSS.
+
+One package contains both DHCP and DNS in a single daemon, and is moreover light on ressources and easy to configure : dnsmasq.
+
+$ sudo pacman –S dnsmasq
+$ sudo vi /etc/dnsmasq.conf
+## DNS CONFIGURATION ##
+# Interfaces for DNS
+interface=eth0
+listen-address=192.168.1.3
+bind-interfaces
+
+# Never forward plain names (without a dot or domain part)
+domain-needed
+
+# Never forward addresses in the non-routed address spaces.
+bogus-priv
+
+# Max concurrent DNS queries (default = 150)
+dns-forward-max=150
+
+# DNS cache size (default = 150)
+cache-size=300
+
+## DHCP CONFIGURATION ##
+# DHCP range and lease time
+dhcp-range=192.168.1.10,192.168.1.20,255.255.255.0,4d
+
+# Set DHCP as authoritative
+dhcp-authoritative
+
+Now let's restart dnsmasq to apply our configuration :
+$ sudo rc.d restart dnsmasq
+
+Now you must disable DHCP on your ISP DSL modem/router. You can't have two DHCP servers in the same subnet.
+
+At this time, it is strongly advised to test both DHCP and DNS. If you wish to do so, follow what is below.
+
+On Windows if you have DHCP configured just type at command line :
+> ipconfig/release
+> ipconfig/renew
+> ipconfig/all
+
+Check that you get not only your IP back, but also your correct gateway and DNS.
+
+To test for the DNS, the check is to be done on the PiWall itself. Run tcpdump with the following arguments :
+$ sudo tcpdump -i eth0 dst port 53 or src port 53 -n -x -X -v
+
+Then on your Windows client, for instance, flush your DNS cache then do a ping to www.google.com :
+> ipconfig/flushdns
+> ping www.google.com
+
+Check with the tcpdump that the request is made by the Windows client to the RSS, and that this one forwards it to the outside DNS server, to finally give the answer to the Windows client. Repeat the dns flush and the ping on the Windows client, and this time the RSS should answer directly without sending a DNS query outside.
+
+
+
+
+Another possible step to improve the security would be to add a certificate to authenticate, also requiring a password. It would render useless any bruteforce attack against SSH. However, as it is just in a home environement without remote access to SSH from the Internet, we can skip this feature.
